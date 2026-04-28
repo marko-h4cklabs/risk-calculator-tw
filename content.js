@@ -188,145 +188,308 @@
   }
 
   // ─────────────────────────────────────────────
-  // Read-lines handler
+  // LineDrawer — interactive line placement on chart
+  // ─────────────────────────────────────────────
+  const LineDrawer = (() => {
+    // Entry first so the user sets the anchor price before risk lines
+    const PHASES = [
+      { key: 'Entry', label: 'Entry', color: '#f0a500', textColor: '#000',
+        status: '1/3 — Click chart to set Entry  (Esc: cancel)' },
+      { key: 'SL',    label: 'SL',    color: '#f23645', textColor: '#fff',
+        status: '2/3 — Click chart to set SL' },
+      { key: 'TP',    label: 'TP',    color: '#4caf50', textColor: '#000',
+        status: '3/3 — Click chart to set TP' },
+    ];
+
+    // All mutable state — fully reset on each start()
+    let chartSVG    = null;   // <svg> overlay for the drawn lines
+    let capDiv      = null;   // transparent div that intercepts chart clicks
+    let statusEl    = null;   // reference to the #line-status element in shadow DOM
+    let doneCb      = null;   // callback({ Entry, SL, TP }) called when all placed
+    let noScaleCb   = null;   // callback() when price axis cannot be read
+    let pricePoints = [];     // [{ y: number, price: number }] sorted top→bottom
+    let decimals    = 5;
+    let phaseIdx    = 0;
+    let recorded    = {};
+    let moveHnd     = null;   // document mousemove handler for the active phase
+    let clickHnd    = null;   // capDiv click handler for the active phase
+    let keyHnd      = null;   // document keydown handler (ESC)
+
+    // ── Price axis reading ────────────────────────────────────────────
+
+    function getChartBounds() {
+      for (const sel of ['.chart-widget', '[class*="chartWidget"]',
+                          '.layout__area--center', '.chart-container']) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width > 300 && r.height > 200) return r;
+      }
+      return { top: 0, left: 0, right: window.innerWidth, bottom: window.innerHeight };
+    }
+
+    function collectPricePoints(bounds) {
+      // Look only in the rightmost strip where TradingView renders the Y-axis labels
+      const minX = bounds.right - 200;
+      const seen = new Map(); // price → { y, left } — deduplicate by price
+
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      while (walker.nextNode()) {
+        const raw = walker.currentNode.textContent.trim().replace(/,/g, '');
+        // Must be a decimal number (e.g. "1.08500", "150.234") — no pure integers
+        if (!/^\d{1,6}\.\d{1,8}$/.test(raw)) continue;
+        const price = parseFloat(raw);
+        if (!price || price <= 0) continue;
+
+        const el = walker.currentNode.parentElement;
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+
+        // Must be horizontally inside the price-axis strip
+        const cx = r.left + r.width / 2;
+        if (cx < minX) continue;
+
+        // Must be vertically inside the chart
+        if (r.top < bounds.top || r.bottom > bounds.bottom) continue;
+
+        const y = r.top + r.height / 2;
+        const prev = seen.get(price);
+        // Keep the occurrence furthest right (most likely the axis label, not body text)
+        if (!prev || r.left > prev.left) seen.set(price, { y, left: r.left });
+      }
+
+      return [...seen.entries()]
+        .map(([price, { y }]) => ({ price, y }))
+        .sort((a, b) => a.y - b.y); // top-to-bottom = high-to-low price
+    }
+
+    function guessDecimals(pts) {
+      let max = 2;
+      for (const { price } of pts) {
+        const s = price.toString();
+        const d = s.indexOf('.');
+        if (d >= 0) max = Math.max(max, s.length - d - 1);
+      }
+      return max;
+    }
+
+    function interpolate(clientY) {
+      const pts = pricePoints, n = pts.length;
+      if (n === 0) return null;
+      if (n === 1) return pts[0].price;
+
+      // Extrapolate above/below the sampled range
+      if (clientY <= pts[0].y) {
+        const s = (pts[1].price - pts[0].price) / (pts[1].y - pts[0].y);
+        return pts[0].price + s * (clientY - pts[0].y);
+      }
+      if (clientY >= pts[n - 1].y) {
+        const s = (pts[n-1].price - pts[n-2].price) / (pts[n-1].y - pts[n-2].y);
+        return pts[n-1].price + s * (clientY - pts[n-1].y);
+      }
+
+      // Linear interpolation between surrounding samples
+      for (let i = 0; i < n - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        if (clientY >= a.y && clientY <= b.y) {
+          const t = (clientY - a.y) / (b.y - a.y);
+          return a.price + t * (b.price - a.price);
+        }
+      }
+      return null;
+    }
+
+    function fmt(price) {
+      return (price !== null && !isNaN(price)) ? price.toFixed(decimals) : '—';
+    }
+
+    // ── SVG helpers ───────────────────────────────────────────────────
+
+    function svgEl(tag, attrs) {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      chartSVG.appendChild(el);
+      return el;
+    }
+
+    function makeLineGroup(color, textColor, dashed) {
+      const line = svgEl('line', {
+        x1: '0', x2: '100%',
+        stroke: color, 'stroke-width': '1.5',
+        ...(dashed ? { 'stroke-dasharray': '8 4' } : {}),
+      });
+      const bg  = svgEl('rect',  { height: '18', rx: '3', fill: color });
+      const txt = svgEl('text',  {
+        fill: textColor,
+        'font-size': '11',
+        'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        'font-weight': '700',
+        'dominant-baseline': 'middle',
+      });
+      return { line, bg, txt };
+    }
+
+    function placeGroup(g, y, labelStr) {
+      g.line.setAttribute('y1', y); g.line.setAttribute('y2', y);
+      g.txt.textContent = labelStr;
+      const w = Math.ceil(labelStr.length * 7.5 + 12);
+      const x = window.innerWidth - w - 16;
+      g.bg.setAttribute('x', x);   g.bg.setAttribute('y',     y - 9);
+      g.bg.setAttribute('width', w);
+      g.txt.setAttribute('x', x + 6); g.txt.setAttribute('y', y);
+    }
+
+    // ── Status helper ─────────────────────────────────────────────────
+
+    function setStatus(text, placing) {
+      if (!statusEl) return;
+      statusEl.textContent = text;
+      statusEl.className   = 'fx-line-status' + (placing ? ' placing' : '');
+    }
+
+    // ── Phase execution ───────────────────────────────────────────────
+
+    function runPhase() {
+      if (phaseIdx >= PHASES.length) { finishPlacement(); return; }
+
+      const ph = PHASES[phaseIdx];
+      setStatus(ph.status, true);
+
+      const grp = makeLineGroup(ph.color, ph.textColor, true);
+
+      // Track mouse globally so the line follows even when the cursor drifts
+      // over the FX panel (which sits above the capture div)
+      moveHnd = (e) => {
+        const price = interpolate(e.clientY);
+        placeGroup(grp, e.clientY, `${ph.label}  ${fmt(price)}`);
+      };
+      document.addEventListener('mousemove', moveHnd);
+
+      // Lock the line when the user clicks anywhere on the chart
+      // (capDiv sits below the FX panel, so panel clicks are unaffected)
+      clickHnd = (e) => {
+        const price = interpolate(e.clientY);
+        if (price === null) return;
+
+        // Solidify: remove dash to show this line is locked
+        grp.line.removeAttribute('stroke-dasharray');
+        recorded[ph.key] = parseFloat(fmt(price));
+        phaseIdx++;
+
+        // Tear down this phase's listeners before advancing
+        document.removeEventListener('mousemove', moveHnd);
+        capDiv.removeEventListener('click', clickHnd);
+        moveHnd = null; clickHnd = null;
+
+        runPhase();
+      };
+      capDiv.addEventListener('click', clickHnd);
+    }
+
+    function finishPlacement() {
+      // Remove the capture div — TradingView regains full mouse control
+      capDiv.remove(); capDiv = null;
+      document.removeEventListener('keydown', keyHnd); keyHnd = null;
+
+      // chartSVG stays in DOM; pointer-events:none means it never blocks the chart
+
+      setStatus('✓ Lines placed — click ⚡ Calculate', false);
+      if (doneCb) doneCb({ ...recorded });
+    }
+
+    // ── Public API ────────────────────────────────────────────────────
+
+    function start(opts) {
+      reset(); // always start fresh, removing any previous SVG
+
+      statusEl  = opts.statusEl;
+      doneCb    = opts.onDone;
+      noScaleCb = opts.onNoScale;
+
+      const bounds = getChartBounds();
+      pricePoints  = collectPricePoints(bounds);
+      decimals     = guessDecimals(pricePoints);
+
+      if (pricePoints.length < 2) {
+        setStatus('⚠ Cannot read price axis — hover over the chart first, then retry.', false);
+        if (noScaleCb) noScaleCb();
+        return;
+      }
+
+      // Full-viewport SVG overlay; pointer-events:none so it never blocks
+      chartSVG = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      Object.assign(chartSVG.style, {
+        position: 'fixed', top: '0', left: '0',
+        width: '100vw', height: '100vh',
+        pointerEvents: 'none',
+        zIndex: '2147483645',
+      });
+      document.body.appendChild(chartSVG);
+
+      // Transparent capture div — sits above chart (z below FX panel)
+      // Gives crosshair cursor and absorbs clicks so TradingView doesn't react
+      capDiv = document.createElement('div');
+      Object.assign(capDiv.style, {
+        position: 'fixed', top: '0', left: '0',
+        width: '100vw', height: '100vh',
+        cursor: 'crosshair',
+        zIndex: '2147483646',
+        background: 'transparent',
+      });
+      document.body.appendChild(capDiv);
+
+      // ESC cancels at any point
+      keyHnd = (e) => { if (e.key === 'Escape') cancel(); };
+      document.addEventListener('keydown', keyHnd);
+
+      phaseIdx = 0; recorded = {};
+      runPhase();
+    }
+
+    function cancel() {
+      const s = statusEl; // grab before reset() nulls it
+      reset();
+      if (s) { s.textContent = 'Cancelled — click "Read Lines" to try again.'; s.className = 'fx-line-status'; }
+    }
+
+    function reset() {
+      // Listeners
+      if (moveHnd)             document.removeEventListener('mousemove', moveHnd);
+      if (clickHnd && capDiv)  capDiv.removeEventListener('click', clickHnd);
+      if (keyHnd)              document.removeEventListener('keydown', keyHnd);
+      // DOM elements
+      capDiv?.remove();
+      chartSVG?.remove();
+      // State
+      chartSVG = null; capDiv = null;
+      pricePoints = []; decimals = 5;
+      phaseIdx = 0; recorded = {};
+      moveHnd = null; clickHnd = null; keyHnd = null;
+    }
+
+    return { start, cancel, reset };
+  })();
+
+  // ─────────────────────────────────────────────
+  // Read-lines handler  (now starts interactive placement)
   // ─────────────────────────────────────────────
   function onReadLines() {
     clearError();
     hideResults();
+    showManualLines(false);
 
-    const prices = scanChartForLines();
-    const found  = Object.values(prices).filter(v => v !== null).length;
-
-    detectedPrices = prices;
-    renderPriceDisplay();
-
-    if (found === 0) {
-      showError('Lines not found — make sure you have 3 horizontal lines labeled SL, Entry, and TP on the chart.\nTry clicking "Enter Manually" to type the prices directly.');
-      showManualLines(true);
-      return;
-    }
-
-    if (found < 3) {
-      const missing = ['SL', 'Entry', 'TP'].filter(k => prices[k] === null).join(', ');
-      showError(`Found ${found}/3 lines. Missing: ${missing}. Check your labels, or fill in the prices below.`);
-      showManualLines(true);
-    } else {
-      showManualLines(false);
-    }
-  }
-
-  // ─────────────────────────────────────────────
-  // DOM scanner — three complementary strategies
-  // ─────────────────────────────────────────────
-  function scanChartForLines() {
-    const result   = { SL: null, Entry: null, TP: null };
-    const labelMap = { sl: 'SL', entry: 'Entry', tp: 'TP' };
-
-    // Strategy 1 — TreeWalker: find exact-match text nodes, then extract price from context
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-    while (walker.nextNode()) {
-      const raw  = walker.currentNode.textContent.trim();
-      const key  = labelMap[raw.toLowerCase()];
-      if (!key || result[key] !== null) continue;
-
-      // Walk up DOM tree looking for an associated price
-      let price = null;
-      let el    = walker.currentNode.parentElement;
-      for (let depth = 0; depth < 5 && el && price === null; depth++) {
-        price = extractPrice(el, walker.currentNode.parentElement);
-        el    = el.parentElement;
-      }
-
-      // Positional fallback: find a price element at the same screen Y
-      if (price === null) {
-        price = priceAtSameY(walker.currentNode.parentElement);
-      }
-
-      if (price !== null) result[key] = price;
-    }
-
-    // Strategy 2 — SVG text elements (TradingView labels are often SVG)
-    if (anyMissing(result)) {
-      for (const el of document.querySelectorAll('svg text, svg tspan')) {
-        const raw = el.textContent.trim();
-        const key = labelMap[raw.toLowerCase()];
-        if (!key || result[key] !== null) continue;
-        const price = priceAtSameY(el) ?? extractPrice(el.parentElement, el);
-        if (price !== null) result[key] = price;
-      }
-    }
-
-    // Strategy 3 — Combined label+price elements ("Entry 1.09234" in one node)
-    if (anyMissing(result)) {
-      const combinedRe = /^(SL|Entry|TP)\s+(\d{1,6}\.\d{2,8})$/i;
-      const walker2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-      while (walker2.nextNode()) {
-        const text  = walker2.currentNode.textContent.trim();
-        const match = text.match(combinedRe);
-        if (!match) continue;
-        const key = labelMap[match[1].toLowerCase()];
-        if (!key || result[key] !== null) continue;
-        result[key] = parseFloat(match[2]);
-      }
-    }
-
-    return result;
-  }
-
-  function anyMissing(result) {
-    return Object.values(result).some(v => v === null);
-  }
-
-  // Extract a forex price from container text, excluding the label element
-  function extractPrice(container, excludeEl) {
-    if (!container) return null;
-    let text = '';
-    for (const child of container.childNodes) {
-      if (child === excludeEl || (child.contains && child.contains(excludeEl))) continue;
-      text += (child.textContent || '') + ' ';
-    }
-    // Also include entire container text as fallback (broader context)
-    text += container.textContent;
-
-    const matches = text.match(/\b(\d{1,6}\.\d{2,8})\b/g) || [];
-    for (const m of matches) {
-      const num = parseFloat(m);
-      if (num > 0.0001 && num < 999999) return num;
-    }
-    return null;
-  }
-
-  // Find a price-looking leaf element whose vertical center is within 12px of labelEl
-  function priceAtSameY(labelEl) {
-    if (!labelEl) return null;
-    const rect  = labelEl.getBoundingClientRect();
-    const centY = rect.top + rect.height / 2;
-    const TOL   = 12; // px tolerance
-
-    let best = null, bestDist = Infinity;
-
-    // Limit search to the chart widget area for performance + accuracy
-    const chartRoot = document.querySelector(
-      '.chart-widget, [class*="chart-container"], #chart-area, body'
-    );
-
-    for (const el of chartRoot.querySelectorAll('*')) {
-      if (el.children.length > 0) continue; // leaf nodes only
-      const text = el.textContent.trim();
-      if (!/^\d{1,6}\.\d{2,8}$/.test(text)) continue;
-
-      const elRect = el.getBoundingClientRect();
-      const elCentY = elRect.top + elRect.height / 2;
-      const dy = Math.abs(elCentY - centY);
-      if (dy <= TOL && dy < bestDist) {
-        const num = parseFloat(text);
-        if (num > 0.0001 && num < 999999) {
-          best     = num;
-          bestDist = dy;
-        }
-      }
-    }
-    return best;
+    LineDrawer.start({
+      statusEl:  q('line-status'),
+      onDone:    (prices) => {
+        detectedPrices = prices;
+        renderPriceDisplay();
+      },
+      onNoScale: () => {
+        showManualLines(true);
+        showError('Price axis unreadable — enter prices manually below.');
+      },
+    });
   }
 
   // ─────────────────────────────────────────────
@@ -334,6 +497,7 @@
   // ─────────────────────────────────────────────
   async function onCalculate() {
     clearError();
+    LineDrawer.reset(); // remove chart overlay once the user commits to Calculate
 
     const riskPct = parseFloat(q('risk-pct').value);
     if (!riskPct || riskPct <= 0) {

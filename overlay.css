@@ -281,3 +281,17 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Line-placement status ── */
+.fx-line-status {
+  min-height: 14px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: #787b86;
+  text-align: center;
+  line-height: 1.4;
+  transition: color 0.15s;
+}
+.fx-line-status.placing {
+  color: #f0a500;
+}
