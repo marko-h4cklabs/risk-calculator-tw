@@ -1,0 +1,283 @@
+/* ── Reset inside shadow DOM ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Root overlay container ── */
+.fx-overlay {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: #d1d4dc;
+  background: #1e222d;
+  border: 1px solid #2a2e3b;
+  border-radius: 8px;
+  width: 260px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── Header ── */
+.fx-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #161a25;
+  cursor: grab;
+  border-bottom: 1px solid #2a2e3b;
+}
+.fx-header:active { cursor: grabbing; }
+
+.fx-logo {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f0a500;
+  letter-spacing: 0.5px;
+}
+
+.fx-collapse-btn {
+  background: none;
+  border: none;
+  color: #787b86;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.fx-collapse-btn:hover { color: #d1d4dc; }
+
+/* ── Body ── */
+.fx-body {
+  padding: 10px;
+}
+
+/* ── Tabs ── */
+.fx-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  background: #161a25;
+  border-radius: 5px;
+  padding: 3px;
+}
+
+.fx-tab {
+  flex: 1;
+  padding: 5px 0;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #787b86;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.fx-tab:hover { color: #d1d4dc; }
+.fx-tab.active {
+  background: #2a2e3b;
+  color: #f0a500;
+}
+
+/* ── Form fields ── */
+.fx-field {
+  margin-bottom: 8px;
+}
+.fx-field label {
+  display: block;
+  font-size: 11px;
+  color: #787b86;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
+.fx-field input,
+.fx-field select {
+  width: 100%;
+  background: #131722;
+  border: 1px solid #2a2e3b;
+  border-radius: 4px;
+  color: #d1d4dc;
+  font-size: 13px;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 0.15s;
+  -webkit-appearance: none;
+}
+.fx-field input:focus,
+.fx-field select:focus {
+  border-color: #f0a500;
+}
+.fx-field input.fx-input-error,
+.fx-field select.fx-input-error {
+  border-color: #f23645;
+}
+
+/* ── Pair display ── */
+.fx-pair-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  background: #131722;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+.fx-pair-label {
+  font-size: 11px;
+  color: #787b86;
+  font-weight: 500;
+}
+.fx-pair-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f0a500;
+  letter-spacing: 1px;
+}
+
+/* ── Detected prices ── */
+.fx-prices {
+  background: #131722;
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+}
+.fx-price-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+}
+.fx-price-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+.sl-tag    { background: rgba(242, 54, 69, 0.2);  color: #f23645; }
+.entry-tag { background: rgba(76, 175, 80, 0.2);   color: #4caf50; }
+.tp-tag    { background: rgba(33, 150, 243, 0.2);  color: #2196f3; }
+
+.fx-price-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: #d1d4dc;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Manual input section ── */
+.fx-manual-section {
+  border: 1px solid #2a2e3b;
+  border-radius: 5px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.fx-manual-header {
+  font-size: 10px;
+  font-weight: 700;
+  color: #787b86;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+/* ── Buttons ── */
+.fx-btn {
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: opacity 0.15s, filter 0.15s;
+}
+.fx-btn:hover   { filter: brightness(1.1); }
+.fx-btn:active  { filter: brightness(0.9); }
+.fx-btn:last-child { margin-bottom: 0; }
+
+.fx-btn-primary {
+  background: #f0a500;
+  color: #000;
+}
+.fx-btn-secondary {
+  background: #2a2e3b;
+  color: #d1d4dc;
+  border: 1px solid #363a45;
+}
+
+/* ── Messages ── */
+.fx-error {
+  background: rgba(242, 54, 69, 0.12);
+  border: 1px solid rgba(242, 54, 69, 0.4);
+  color: #f23645;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+.fx-success {
+  background: rgba(76, 175, 80, 0.12);
+  border: 1px solid rgba(76, 175, 80, 0.4);
+  color: #4caf50;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  text-align: center;
+  margin-top: 6px;
+}
+
+/* ── Results ── */
+.fx-results {
+  background: #131722;
+  border-radius: 5px;
+  padding: 10px;
+  margin-top: 4px;
+}
+.fx-result-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.fx-result-main-label {
+  font-size: 11px;
+  color: #787b86;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.fx-result-main-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: #f0a500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.fx-divider {
+  height: 1px;
+  background: #2a2e3b;
+  margin: 6px 0;
+}
+.fx-result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.fx-result-row span:first-child {
+  color: #787b86;
+}
+.fx-result-row span:last-child {
+  color: #d1d4dc;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

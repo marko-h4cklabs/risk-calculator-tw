@@ -1,0 +1,132 @@
+<div class="fx-overlay" id="fx-overlay">
+
+  <!-- ── Header / drag handle ── -->
+  <div class="fx-header" id="fx-header">
+    <span class="fx-logo">⚡ FX Risk</span>
+    <button class="fx-collapse-btn" id="fx-toggle" title="Expand / Collapse">▲</button>
+  </div>
+
+  <!-- ── Collapsible body ── -->
+  <div class="fx-body" id="fx-panel">
+
+    <!-- Tabs -->
+    <div class="fx-tabs">
+      <button class="fx-tab active" data-tab="calculator">Calculator</button>
+      <button class="fx-tab"        data-tab="settings">Settings</button>
+    </div>
+
+    <!-- ══════════════ CALCULATOR TAB ══════════════ -->
+    <div class="fx-tab-content" id="tab-calculator">
+
+      <!-- Detected pair -->
+      <div class="fx-pair-row">
+        <span class="fx-pair-label">Pair</span>
+        <span class="fx-pair-value" id="detected-pair">Detecting…</span>
+      </div>
+
+      <!-- Risk % (editable per trade) -->
+      <div class="fx-field">
+        <label for="risk-pct">Risk %</label>
+        <input type="number" id="risk-pct" min="0.01" max="100" step="0.1" value="0.5" />
+      </div>
+
+      <!-- Read-lines button -->
+      <button class="fx-btn fx-btn-secondary" id="btn-read-lines">📍 Read Lines from Chart</button>
+
+      <!-- Detected prices (read-only display) -->
+      <div class="fx-prices" id="prices-display">
+        <div class="fx-price-row">
+          <span class="fx-price-tag sl-tag">SL</span>
+          <span class="fx-price-val" id="price-sl">—</span>
+        </div>
+        <div class="fx-price-row">
+          <span class="fx-price-tag entry-tag">Entry</span>
+          <span class="fx-price-val" id="price-entry">—</span>
+        </div>
+        <div class="fx-price-row">
+          <span class="fx-price-tag tp-tag">TP</span>
+          <span class="fx-price-val" id="price-tp">—</span>
+        </div>
+      </div>
+
+      <!-- Manual lines fallback (hidden by default) -->
+      <div id="manual-lines-section" class="fx-manual-section" style="display:none">
+        <div class="fx-manual-header">Manual Price Input</div>
+        <div class="fx-field">
+          <label for="manual-sl">SL Price</label>
+          <input type="number" id="manual-sl" step="0.00001" placeholder="e.g. 1.08500" />
+        </div>
+        <div class="fx-field">
+          <label for="manual-entry">Entry Price</label>
+          <input type="number" id="manual-entry" step="0.00001" placeholder="e.g. 1.09000" />
+        </div>
+        <div class="fx-field">
+          <label for="manual-tp">TP Price</label>
+          <input type="number" id="manual-tp" step="0.00001" placeholder="e.g. 1.10000" />
+        </div>
+      </div>
+
+      <!-- Error message -->
+      <div id="fx-error" class="fx-error" style="display:none"></div>
+
+      <!-- Manual exchange-rate fallback (injected dynamically when API fails) -->
+      <div id="manual-rates-section" style="display:none">
+        <div class="fx-manual-header">Manual Exchange Rates</div>
+        <div id="manual-rates-inputs"></div>
+      </div>
+
+      <!-- Calculate -->
+      <button class="fx-btn fx-btn-primary" id="btn-calculate">⚡ Calculate</button>
+
+      <!-- Results -->
+      <div id="results" class="fx-results" style="display:none">
+        <div class="fx-result-main">
+          <span class="fx-result-main-label">Lot Size</span>
+          <span class="fx-result-main-value" id="result-lot">—</span>
+        </div>
+        <div class="fx-divider"></div>
+        <div class="fx-result-row">
+          <span>Money at Risk</span><span id="result-risk">—</span>
+        </div>
+        <div class="fx-result-row">
+          <span>R:R Ratio</span><span id="result-rr">—</span>
+        </div>
+        <div class="fx-result-row">
+          <span>SL Distance</span><span id="result-sl-pips">—</span>
+        </div>
+        <div class="fx-result-row">
+          <span>TP Distance</span><span id="result-tp-pips">—</span>
+        </div>
+      </div>
+
+    </div><!-- /tab-calculator -->
+
+    <!-- ══════════════ SETTINGS TAB ══════════════ -->
+    <div class="fx-tab-content" id="tab-settings" style="display:none">
+
+      <div class="fx-field">
+        <label for="account-size">Account Size</label>
+        <input type="number" id="account-size" min="1" step="1" placeholder="e.g. 10000" />
+      </div>
+
+      <div class="fx-field">
+        <label for="account-currency">Account Currency</label>
+        <select id="account-currency">
+          <option value="USD">USD — US Dollar</option>
+          <option value="EUR">EUR — Euro</option>
+          <option value="GBP">GBP — British Pound</option>
+        </select>
+      </div>
+
+      <div class="fx-field">
+        <label for="default-risk">Default Risk %</label>
+        <input type="number" id="default-risk" min="0.01" max="100" step="0.1" placeholder="e.g. 0.5" />
+      </div>
+
+      <button class="fx-btn fx-btn-primary" id="btn-save-settings">Save Settings</button>
+      <div id="settings-feedback" class="fx-success" style="display:none">✓ Settings saved</div>
+
+    </div><!-- /tab-settings -->
+
+  </div><!-- /fx-body -->
+</div><!-- /fx-overlay -->

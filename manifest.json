@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "FX Risk Calculator",
+  "version": "1.0.0",
+  "description": "Instant position size calculator overlay for TradingView forex trading",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "*://*.tradingview.com/*",
+    "https://api.exchangerate-api.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://*.tradingview.com/*"],
+      "js": ["settings.js", "calculator.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["overlay.html", "overlay.css"],
+      "matches": ["*://*.tradingview.com/*"]
+    }
+  ]
+}
