@@ -302,22 +302,46 @@
       if (n === 0) return null;
       if (n === 1) return pts[0].price;
 
-      // Extrapolate above/below the sampled range
-      if (clientY <= pts[0].y) {
-        const s = (pts[1].price - pts[0].price) / (pts[1].y - pts[0].y);
-        return pts[0].price + s * (clientY - pts[0].y);
+      // Find the first adjacent pair with a non-zero pixel span for extrapolation anchors
+      function slopeAt(i) {
+        const dy = pts[i + 1].y - pts[i].y;
+        if (Math.abs(dy) < 0.5) return null; // zero-range guard
+        return (pts[i + 1].price - pts[i].price) / dy;
       }
+
+      // Extrapolate above the sampled range
+      if (clientY <= pts[0].y) {
+        for (let i = 0; i < n - 1; i++) {
+          const s = slopeAt(i);
+          if (s !== null) {
+            const result = pts[i].price + s * (clientY - pts[i].y);
+            return isFinite(result) ? result : null;
+          }
+        }
+        return pts[0].price;
+      }
+
+      // Extrapolate below the sampled range
       if (clientY >= pts[n - 1].y) {
-        const s = (pts[n-1].price - pts[n-2].price) / (pts[n-1].y - pts[n-2].y);
-        return pts[n-1].price + s * (clientY - pts[n-1].y);
+        for (let i = n - 2; i >= 0; i--) {
+          const s = slopeAt(i);
+          if (s !== null) {
+            const result = pts[i].price + s * (clientY - pts[i].y);
+            return isFinite(result) ? result : null;
+          }
+        }
+        return pts[n - 1].price;
       }
 
       // Linear interpolation between surrounding samples
       for (let i = 0; i < n - 1; i++) {
         const a = pts[i], b = pts[i + 1];
         if (clientY >= a.y && clientY <= b.y) {
-          const t = (clientY - a.y) / (b.y - a.y);
-          return a.price + t * (b.price - a.price);
+          const dy = b.y - a.y;
+          if (Math.abs(dy) < 0.5) return a.price; // degenerate segment — return anchor price
+          const t = (clientY - a.y) / dy;
+          const result = a.price + t * (b.price - a.price);
+          return isFinite(result) ? result : null;
         }
       }
       return null;
@@ -393,7 +417,15 @@
       // (capDiv sits below the FX panel, so panel clicks are unaffected)
       clickHnd = (e) => {
         const price = interpolate(e.clientY);
-        if (price === null) return;
+        // null means interpolation failed (zero-range axis); trigger manual fallback
+        if (price === null || !isFinite(price)) {
+          document.removeEventListener('mousemove', moveHnd);
+          capDiv.removeEventListener('click', clickHnd);
+          moveHnd = null; clickHnd = null;
+          cancel();
+          if (noScaleCb) noScaleCb();
+          return;
+        }
 
         // Solidify: remove dash to show this line is locked
         grp.line.removeAttribute('stroke-dasharray');
