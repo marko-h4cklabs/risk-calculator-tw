@@ -1,9 +1,10 @@
 // All position-size math lives here. No DOM access.
 const Calculator = (() => {
   const STANDARD_LOT = 100_000;
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-  // Session-level rate cache so we don't fetch on every click
-  let _ratesCache = null;
+  let _ratesCache     = null;
+  let _ratesFetchedAt = 0;
 
   function getPipSize(pair) {
     return /JPY/i.test(pair) ? 0.01 : 0.0001;
@@ -18,103 +19,170 @@ const Calculator = (() => {
   }
 
   async function fetchRates() {
-    if (_ratesCache) return _ratesCache;
+    const now = Date.now();
+    if (_ratesCache && (now - _ratesFetchedAt) < CACHE_TTL_MS) return _ratesCache;
     const res = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    // API returns: rates[X] = how many X per 1 USD
-    _ratesCache = { USD: 1, ...data.rates };
+    // rates[X] = how many X per 1 USD
+    _ratesCache     = { USD: 1, ...data.rates };
+    _ratesFetchedAt = now;
     return _ratesCache;
   }
 
-  // manualRates keys use the API convention: how many of that currency per 1 USD.
-  // UI is responsible for converting user-friendly inputs before passing in.
+  // manualRates: { CURRENCY: X } where X = how many of that currency per 1 USD (API convention).
+  // UI converts user-friendly inputs to this convention before passing in.
   async function calculate({ entry, sl, tp, pair, accountSize, accountCurrency, riskPct, manualRates = {} }) {
     const pipSize       = getPipSize(pair);
     const baseCurrency  = getBaseCurrency(pair);
     const quoteCurrency = getQuoteCurrency(pair);
 
-    const slPips  = Math.abs(entry - sl)  / pipSize;
-    const tpPips  = Math.abs(tp   - entry) / pipSize;
-    const rrRatio = tpPips / slPips;
+    const slPipsRaw = Math.abs(entry - sl)  / pipSize;
+    const tpPipsRaw = Math.abs(tp   - entry) / pipSize;
+    const rrRatio   = tpPipsRaw / slPipsRaw;
 
-    // Risk in account currency — exact by definition
+    // ── Step 1: Risk amount in account currency ────────────────────────
     const riskAmountAccount = accountSize * (riskPct / 100);
 
-    // Determine which rates we need:
-    //   Case 1: QUOTE === accountCurrency  → pip value is already in account currency, no rate needed
-    //   Case 2: BASE  === accountCurrency  → need spot rate of the pair itself (entry price ≈ spot)
-    //   Case 3: cross pair                 → need QUOTE/accountCurrency spot rate
+    // ── Step 2: Determine which live rates are needed ──────────────────
     //
-    // rates[X] = X per 1 USD  (API convention)
-    // To convert X→Y: multiply by rates[Y] / rates[X]
+    // Pip value is always computed in USD first (3 cases based on pair structure):
+    //   quoteIsUSD → pip value already in USD, no rate needed
+    //   baseIsUSD  → use entry price as the implicit USD/QUOTE rate
+    //   cross pair → need rates[quoteCurrency] to convert QUOTE → USD
+    //
+    // Account conversion: need rates[accountCurrency] whenever account ≠ USD,
+    //   regardless of which pip-value case applies.
+    const quoteIsUSD      = quoteCurrency    === 'USD';
+    const baseIsUSD       = baseCurrency     === 'USD';
+    const needPipRate     = !quoteIsUSD && !baseIsUSD;   // cross pair
+    const needAccountRate = accountCurrency  !== 'USD';
 
-    const case1 = quoteCurrency === accountCurrency;
-    const case2 = baseCurrency  === accountCurrency;
-
-    // For case 3 we need rates[quoteCurrency] and rates[accountCurrency]
     let rates = { USD: 1, ...manualRates };
 
-    const needsQuoteRate = !case1 && !case2 && quoteCurrency !== 'USD' && !rates[quoteCurrency];
-    const needsAcctRate  = !case1             && accountCurrency !== 'USD' && !rates[accountCurrency];
+    const missingFromRates =
+      (needPipRate     && !rates[quoteCurrency])   ||
+      (needAccountRate && !rates[accountCurrency]);
 
-    if (needsQuoteRate || needsAcctRate) {
+    if (missingFromRates) {
       try {
         const fetched = await fetchRates();
-        rates = { ...fetched, ...manualRates };
-      } catch {
+        rates = { ...fetched, ...manualRates }; // manual overrides win
+      } catch (_fetchErr) {
         const missing = [];
-        if (needsQuoteRate && !rates[quoteCurrency]) {
+        if (needPipRate && !rates[quoteCurrency]) {
           missing.push({
             currency:  quoteCurrency,
-            label:     `1 USD = ??? ${quoteCurrency}  (e.g. USDJPY → 150)`,
+            label:     `Enter current USD → ${quoteCurrency} rate  (e.g. USDJPY → 150)`,
             direction: 'usdToQuote',
           });
         }
-        if (needsAcctRate && !rates[accountCurrency]) {
+        if (needAccountRate && !rates[accountCurrency]) {
           missing.push({
             currency:  accountCurrency,
-            label:     `1 ${accountCurrency} = ??? USD  (e.g. EURUSD → 1.08)`,
+            label:     `Enter current ${accountCurrency} → USD rate  (e.g. EUR → 1.08)`,
             direction: 'acctToUSD',
           });
         }
-        if (missing.length > 0) {
-          throw { type: 'RATE_ERROR', missing, message: 'Exchange rate API unavailable. Enter rates manually.' };
-        }
+        throw { type: 'RATE_ERROR', missing, message: 'Exchange rate API unavailable. Enter rates manually.' };
       }
     }
 
-    // Pip value per standard lot in account currency
-    // rates[X] = X per 1 USD, so:  1 unit of X = 1 / rates[X]  USD
-    //                               1 unit of Y = 1 / rates[Y]  USD
-    //                               1 X = rates[Y] / rates[X]   Y
-    let pipValuePerLotAcct;
-    if (case1) {
-      // QUOTE === accountCurrency: pip value = pipSize × lot size (already in account currency)
-      pipValuePerLotAcct = STANDARD_LOT * pipSize;
-    } else if (case2) {
-      // BASE === accountCurrency: pip value in quote currency, convert via current spot price
-      // spot ≈ entry (mid-price); pipValue in base = pipSize × lot / entry
-      pipValuePerLotAcct = STANDARD_LOT * pipSize / entry;
-    } else {
-      // Cross pair: pip value in quote currency; convert quote → accountCurrency
-      // pipValueQuote = STANDARD_LOT × pipSize
-      // pipValueAcct  = pipValueQuote × (1 / rates[quoteCurrency]) × rates[accountCurrency]
-      //               = STANDARD_LOT × pipSize × rates[accountCurrency] / rates[quoteCurrency]
-      const rQ = rates[quoteCurrency]   || 1;
-      const rA = rates[accountCurrency] || 1;
-      pipValuePerLotAcct = STANDARD_LOT * pipSize * rA / rQ;
+    // After fetching: verify required rates are actually in the response
+    // (rare, but handles exotic currencies not covered by the free API tier)
+    const stillMissing = [];
+    if (needPipRate && !rates[quoteCurrency]) {
+      stillMissing.push({
+        currency:  quoteCurrency,
+        label:     `${quoteCurrency} missing from API — enter USD → ${quoteCurrency}`,
+        direction: 'usdToQuote',
+      });
+    }
+    if (needAccountRate && !rates[accountCurrency]) {
+      stillMissing.push({
+        currency:  accountCurrency,
+        label:     `${accountCurrency} missing from API — enter ${accountCurrency} → USD`,
+        direction: 'acctToUSD',
+      });
+    }
+    if (stillMissing.length > 0) {
+      throw { type: 'RATE_ERROR', missing: stillMissing, message: 'Some rates missing from API. Enter manually.' };
     }
 
-    const rawLot = riskAmountAccount / (slPips * pipValuePerLotAcct);
+    // ── Step 3: Pip value per standard lot in USD ──────────────────────
+    //
+    // Case A — QUOTE is USD (EURUSD, GBPUSD, AUDUSD …):
+    //   pip value in USD = STANDARD_LOT × pipSize  (already in USD)
+    //
+    // Case B — BASE is USD (USDJPY, USDCAD, USDCHF …):
+    //   pip value in QUOTE = STANDARD_LOT × pipSize
+    //   entry ≈ spot price (USD per QUOTE), so divide to get USD
+    //   pip value in USD = STANDARD_LOT × pipSize / entry
+    //
+    // Case C — cross pair (GBPJPY, EURGBP, EURJPY …):
+    //   pip value in QUOTE = STANDARD_LOT × pipSize
+    //   rates[quoteCurrency] = QUOTE per 1 USD, so divide to get USD
+    //   pip value in USD = STANDARD_LOT × pipSize / rates[quoteCurrency]
+    let pipValuePerLotUSD;
+    let pipCase;
+    let rateUsed;
+
+    if (quoteIsUSD) {
+      pipValuePerLotUSD = STANDARD_LOT * pipSize;
+      pipCase           = 'A — quote = USD';
+      rateUsed          = 'n/a';
+    } else if (baseIsUSD) {
+      pipValuePerLotUSD = STANDARD_LOT * pipSize / entry;
+      pipCase           = 'B — base = USD (entry price)';
+      rateUsed          = `entry = ${entry}`;
+    } else {
+      const rQ          = rates[quoteCurrency];
+      pipValuePerLotUSD = STANDARD_LOT * pipSize / rQ;
+      pipCase           = `C — cross (${quoteCurrency}/USD via API)`;
+      rateUsed          = `1 USD = ${rQ} ${quoteCurrency}`;
+    }
+
+    // ── Step 4: Convert risk amount to USD ─────────────────────────────
+    // rates[accountCurrency] = accountCurrency per 1 USD
+    // → 1 accountCurrency = 1 / rates[accountCurrency] USD
+    const rA           = rates[accountCurrency] ?? 1; // 1 for USD accounts
+    const riskAmountUSD = riskAmountAccount / rA;
+
+    // ── Step 5: Lot size ───────────────────────────────────────────────
+    const rawLot  = riskAmountUSD / (slPipsRaw * pipValuePerLotUSD);
+    const lotSize = Math.round(rawLot * 100) / 100;
+
+    // ── Step 6: Actual money at risk (post-rounding) in account currency
+    // Lot rounding changes the realised risk slightly vs the target.
+    const actualRiskUSD  = lotSize * slPipsRaw * pipValuePerLotUSD;
+    const moneyAtRisk    = actualRiskUSD * rA;  // USD → account currency
 
     return {
-      lotSize:       Math.round(rawLot  * 100) / 100,
-      moneyAtRisk:   riskAmountAccount,
+      lotSize,
+      moneyAtRisk,
       accountCurrency,
-      rrRatio:       Math.round(rrRatio * 100) / 100,
-      slPips:        Math.round(slPips  * 10)  / 10,
-      tpPips:        Math.round(tpPips  * 10)  / 10,
+      rrRatio: Math.round(rrRatio   * 100) / 100,
+      slPips:  Math.round(slPipsRaw * 10)  / 10,
+      tpPips:  Math.round(tpPipsRaw * 10)  / 10,
+      _debug: {
+        pair,
+        baseCurrency,
+        quoteCurrency,
+        accountCurrency,
+        pipCase,
+        pipSize,
+        pipValuePerLotUSD,
+        rateUsed,
+        accountRateToUSD: 1 / rA,       // e.g. 1 EUR = 1.099 USD
+        riskAmountAccount,
+        riskAmountUSD,
+        slPipsRaw,
+        tpPipsRaw,
+        rawLot,
+        lotSize,
+        actualRiskUSD,
+        moneyAtRisk,
+      },
     };
   }
 

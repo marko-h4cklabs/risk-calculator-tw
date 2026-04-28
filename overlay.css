@@ -282,6 +282,52 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Debug panel ── */
+.fx-debug-panel {
+  background: #0d1117;
+  border: 1px solid #f0a500;
+  border-radius: 5px;
+  padding: 8px;
+  margin-top: 8px;
+  font-family: 'Courier New', Courier, monospace;
+}
+.fx-debug-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #f0a500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 5px;
+}
+.fx-debug-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 2px 0;
+  border-bottom: 1px solid #1a1e2a;
+  gap: 8px;
+}
+.fx-debug-row:last-of-type { border-bottom: none; }
+.fx-debug-key {
+  font-size: 10px;
+  color: #787b86;
+  flex-shrink: 0;
+}
+.fx-debug-val {
+  font-size: 10px;
+  color: #4caf50;
+  font-weight: 700;
+  text-align: right;
+  word-break: break-all;
+}
+.fx-debug-hint {
+  font-size: 9px;
+  color: #3a3e4b;
+  text-align: center;
+  margin-top: 5px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
 /* ── Line-placement status ── */
 .fx-line-status {
   min-height: 14px;

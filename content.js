@@ -9,6 +9,7 @@
   let uiReady = false;      // true only after overlay HTML is injected and initUI() completes
   let detectedPair = null;
   let detectedPrices = { SL: null, Entry: null, TP: null };
+  let lastDebugData  = null; // populated after every successful calculation
 
   // ─────────────────────────────────────────────
   // Bootstrap
@@ -117,6 +118,16 @@
     q('btn-read-lines')?.addEventListener('click', onReadLines);
     q('btn-calculate')?.addEventListener('click', onCalculate);
     q('btn-save-settings')?.addEventListener('click', onSaveSettings);
+
+    // Secret debug toggle: type "fxdebug" while focused on the Risk % field.
+    // type="number" swallows the characters so .value never changes, but keydown
+    // still fires — we build a rolling buffer to detect the sequence.
+    const DEBUG_SEQ = 'fxdebug';
+    let debugBuf = '';
+    q('risk-pct')?.addEventListener('keydown', (e) => {
+      debugBuf = (debugBuf + e.key).slice(-DEBUG_SEQ.length);
+      if (debugBuf === DEBUG_SEQ) { debugBuf = ''; toggleDebugPanel(); }
+    });
   }
 
   // ─────────────────────────────────────────────
@@ -616,8 +627,10 @@
         manualRates,
       });
 
+      lastDebugData = result._debug;
       renderResults(result, settings.accountCurrency);
       hideManualRates();
+      refreshDebugPanel();
     } catch (err) {
       if (err.type === 'RATE_ERROR') {
         showError(err.message);
@@ -793,6 +806,60 @@
     slEl.textContent   = `${result.slPips.toFixed(1)} pips`;
     tpEl.textContent   = `${result.tpPips.toFixed(1)} pips`;
     resEl.style.display = '';
+  }
+
+  // ─────────────────────────────────────────────
+  // Debug panel
+  // ─────────────────────────────────────────────
+  function toggleDebugPanel() {
+    const panel = q('fx-debug-panel');
+    if (!panel) return;
+    const visible = panel.style.display !== 'none';
+    if (visible) {
+      panel.style.display = 'none';
+    } else {
+      refreshDebugPanel();
+      panel.style.display = '';
+    }
+  }
+
+  function refreshDebugPanel() {
+    const panel = q('fx-debug-panel');
+    const rows  = q('fx-debug-rows');
+    if (!panel || !rows || panel.style.display === 'none') return;
+
+    const CURRENCY_SYMBOLS = { USD: '$', EUR: '€', GBP: '£' };
+
+    if (!lastDebugData) {
+      rows.innerHTML = '<div style="font-size:10px;color:#787b86;text-align:center;padding:4px">Run a calculation first</div>';
+      return;
+    }
+
+    const d   = lastDebugData;
+    const sym = CURRENCY_SYMBOLS[d.accountCurrency] || (d.accountCurrency + ' ');
+
+    const entries = [
+      ['Pair',               d.pair],
+      ['Base / Quote',       `${d.baseCurrency} / ${d.quoteCurrency}`],
+      ['Account',            `${sym} ${d.accountCurrency}`],
+      ['Pip case',           d.pipCase],
+      ['Rate used',          d.rateUsed],
+      ['Acct rate → USD',   `1 ${d.accountCurrency} = ${d.accountRateToUSD.toFixed(5)} USD`],
+      ['Pip size',           d.pipSize],
+      ['Pip val / lot (USD)', `$${d.pipValuePerLotUSD.toFixed(4)}`],
+      ['Risk target',        `${sym}${d.riskAmountAccount.toFixed(2)}`],
+      ['Risk in USD',        `$${d.riskAmountUSD.toFixed(4)}`],
+      ['SL pips (raw)',      d.slPipsRaw.toFixed(2)],
+      ['TP pips (raw)',      d.tpPipsRaw.toFixed(2)],
+      ['Raw lot',            d.rawLot.toFixed(4)],
+      ['Rounded lot',        d.lotSize.toFixed(2)],
+      ['Actual risk (USD)',  `$${d.actualRiskUSD.toFixed(4)}`],
+      ['Actual risk (acct)', `${sym}${d.moneyAtRisk.toFixed(2)}`],
+    ];
+
+    rows.innerHTML = entries.map(([k, v]) =>
+      `<div class="fx-debug-row"><span class="fx-debug-key">${k}</span><span class="fx-debug-val">${v}</span></div>`
+    ).join('');
   }
 
   // ─────────────────────────────────────────────
