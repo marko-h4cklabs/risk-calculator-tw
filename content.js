@@ -154,9 +154,23 @@
   // Pair detection
   // ─────────────────────────────────────────────
   function detectPair() {
-    // 1. Page title: "EURUSD, 15 — TradingView"
-    const titleMatch = document.title.match(/\b([A-Z]{6})\b/);
-    if (titleMatch) return titleMatch[1];
+    // 1. DOM selectors — most accurate once the chart widget is mounted.
+    //    Wrapped in try/catch because some selectors can throw on malformed DOMs,
+    //    and we guard el.textContent explicitly before calling .replace() on it.
+    const domSelectors = [
+      '[data-name="legend-series-item"] .js-button-text',
+      '[class*="titleWrapper"] [class*="title"]',
+      '[class*="SymbolInfo"] [class*="title"]',
+      '.chart-widget [class*="title"]',
+    ];
+    try {
+      for (const sel of domSelectors) {
+        const el = document.querySelector(sel);
+        if (!el || !el.textContent) continue;
+        const text = el.textContent.replace(/[^A-Z]/gi, '').toUpperCase();
+        if (/^[A-Z]{6}$/.test(text)) return text;
+      }
+    } catch (_) { /* selector threw — fall through to next strategy */ }
 
     // 2. URL ?symbol= or #symbol=
     const urlSymbol = new URLSearchParams(window.location.search).get('symbol')
@@ -166,19 +180,11 @@
       if (clean.length >= 6) return clean.slice(0, 6);
     }
 
-    // 3. Common TradingView DOM selectors (class names change with deploys)
-    const domSelectors = [
-      '[data-name="legend-series-item"] .js-button-text',
-      '[class*="titleWrapper"] [class*="title"]',
-      '[class*="SymbolInfo"] [class*="title"]',
-      '.chart-widget [class*="title"]',
-    ];
-    for (const sel of domSelectors) {
-      const el = document.querySelector(sel);
-      if (!el) continue;
-      const text = el.textContent.replace(/[^A-Z]/gi, '').toUpperCase();
-      if (/^[A-Z]{6}$/.test(text)) return text;
-    }
+    // 3. Page title fallback.
+    //    Handles both "EURUSD · 1D · OANDA · TradingView" and "EURUSD, 15 — TradingView".
+    //    Split on middle-dot, whitespace, or comma; take the first token; strip non-letters.
+    const firstToken = document.title.split(/[·\s,]+/)[0].replace(/[^A-Z]/gi, '').toUpperCase();
+    if (/^[A-Z]{6}$/.test(firstToken)) return firstToken;
 
     return null;
   }
