@@ -6,6 +6,7 @@
   if (document.getElementById('fx-risk-calc-host')) return;
 
   let shadow = null;        // ShadowRoot
+  let uiReady = false;      // true only after overlay HTML is injected and initUI() completes
   let detectedPair = null;
   let detectedPrices = { SL: null, Entry: null, TP: null };
 
@@ -71,6 +72,10 @@
 
     wireEvents();
     setupDrag();
+
+    // Mark DOM as ready — the MutationObserver in watchTitleForPair() checks this
+    // before calling renderPair(), so it never runs against a null element.
+    uiReady = true;
   }
 
   // ─────────────────────────────────────────────
@@ -171,6 +176,7 @@
 
   function renderPair() {
     const el = q('detected-pair');
+    if (!el) return;
     el.textContent = detectedPair || 'Not detected';
     el.style.color = detectedPair ? '#f0a500' : '#f23645';
   }
@@ -182,7 +188,7 @@
       const found = detectPair();
       if (found && found !== detectedPair) {
         detectedPair = found;
-        if (shadow) renderPair();
+        if (uiReady) renderPair();
       }
     }).observe(titleEl, { childList: true, characterData: true, subtree: true });
   }
