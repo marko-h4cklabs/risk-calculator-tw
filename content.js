@@ -58,23 +58,32 @@
   async function initUI() {
     const settings = await Settings.load();
 
-    // Populate calculator tab defaults
-    q('risk-pct').value = settings.defaultRisk;
+    // Guard every element before writing — the await above creates a suspension
+    // point; although the shadow DOM isn't torn down between ticks, being
+    // explicit here makes every subsequent call safe.
+    const riskPctEl        = q('risk-pct');
+    const accountSizeEl    = q('account-size');
+    const accountCurrEl    = q('account-currency');
+    const defaultRiskEl    = q('default-risk');
 
-    // Populate settings tab
-    q('account-size').value      = settings.accountSize;
-    q('account-currency').value  = settings.accountCurrency;
-    q('default-risk').value      = settings.defaultRisk;
+    if (!riskPctEl || !accountSizeEl || !accountCurrEl || !defaultRiskEl) {
+      console.error('[FX Risk] initUI: one or more form elements missing from shadow DOM');
+      return;
+    }
 
-    // Refresh pair
+    riskPctEl.value     = settings.defaultRisk;
+    accountSizeEl.value = settings.accountSize;
+    accountCurrEl.value = settings.accountCurrency;
+    defaultRiskEl.value = settings.defaultRisk;
+
     detectedPair = detectPair();
     renderPair();
 
     wireEvents();
     setupDrag();
 
-    // Mark DOM as ready — the MutationObserver in watchTitleForPair() checks this
-    // before calling renderPair(), so it never runs against a null element.
+    // Only flip the flag after everything is wired — the MutationObserver
+    // in watchTitleForPair() checks this before touching any shadow elements.
     uiReady = true;
   }
 
@@ -82,10 +91,11 @@
   // Event wiring
   // ─────────────────────────────────────────────
   function wireEvents() {
-    // Collapse / expand
-    q('fx-toggle').addEventListener('click', () => {
+    // Collapse / expand — use optional chaining so a missing element skips silently
+    q('fx-toggle')?.addEventListener('click', () => {
       const panel = q('fx-panel');
       const btn   = q('fx-toggle');
+      if (!panel || !btn) return;
       const collapsed = panel.style.display === 'none';
       panel.style.display = collapsed ? '' : 'none';
       btn.textContent    = collapsed ? '▲' : '▼';
@@ -96,20 +106,17 @@
       tab.addEventListener('click', () => {
         shadow.querySelectorAll('.fx-tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
-        const tabId = tab.dataset.tab;
-        q('tab-calculator').style.display = tabId === 'calculator' ? '' : 'none';
-        q('tab-settings').style.display   = tabId === 'settings'   ? '' : 'none';
+        const tabId   = tab.dataset.tab;
+        const calcTab = q('tab-calculator');
+        const settTab = q('tab-settings');
+        if (calcTab) calcTab.style.display = tabId === 'calculator' ? '' : 'none';
+        if (settTab) settTab.style.display = tabId === 'settings'   ? '' : 'none';
       });
     });
 
-    // Read lines
-    q('btn-read-lines').addEventListener('click', onReadLines);
-
-    // Calculate
-    q('btn-calculate').addEventListener('click', onCalculate);
-
-    // Save settings
-    q('btn-save-settings').addEventListener('click', onSaveSettings);
+    q('btn-read-lines')?.addEventListener('click', onReadLines);
+    q('btn-calculate')?.addEventListener('click', onCalculate);
+    q('btn-save-settings')?.addEventListener('click', onSaveSettings);
   }
 
   // ─────────────────────────────────────────────
@@ -119,13 +126,16 @@
     const host   = document.getElementById('fx-risk-calc-host');
     const header = shadow.getElementById('fx-header');
 
+    // Both must exist — header is the drag handle, host is what we reposition
+    if (!host || !header) return;
+
     let dragging = false, ox = 0, oy = 0, startRight = 0, startBottom = 0;
 
     header.addEventListener('mousedown', e => {
       if (e.target.tagName === 'BUTTON') return;
-      dragging   = true;
-      ox         = e.clientX;
-      oy         = e.clientY;
+      dragging    = true;
+      ox          = e.clientX;
+      oy          = e.clientY;
       startRight  = parseInt(host.style.right,  10) || 20;
       startBottom = parseInt(host.style.bottom, 10) || 20;
       e.preventDefault();
@@ -133,7 +143,6 @@
 
     document.addEventListener('mousemove', e => {
       if (!dragging) return;
-      // right = startRight + (ox - e.clientX)  — drag left → right increases
       host.style.right  = Math.max(0, startRight  + (ox - e.clientX)) + 'px';
       host.style.bottom = Math.max(0, startBottom + (oy - e.clientY)) + 'px';
     });
@@ -188,6 +197,8 @@
       const found = detectPair();
       if (found && found !== detectedPair) {
         detectedPair = found;
+        // uiReady is only true after initUI() finishes — guards against the race
+        // where the title changes before the HTML template has been injected.
         if (uiReady) renderPair();
       }
     }).observe(titleEl, { childList: true, characterData: true, subtree: true });
@@ -454,7 +465,7 @@
     }
 
     function cancel() {
-      const s = statusEl; // grab before reset() nulls it
+      const s = statusEl; // grab before reset() clears it
       reset();
       if (s) { s.textContent = 'Cancelled — click "Read Lines" to try again.'; s.className = 'fx-line-status'; }
     }
@@ -478,7 +489,7 @@
   })();
 
   // ─────────────────────────────────────────────
-  // Read-lines handler  (now starts interactive placement)
+  // Read-lines handler  (starts interactive placement)
   // ─────────────────────────────────────────────
   function onReadLines() {
     clearError();
@@ -505,7 +516,9 @@
     clearError();
     LineDrawer.reset(); // remove chart overlay once the user commits to Calculate
 
-    const riskPct = parseFloat(q('risk-pct').value);
+    const riskPctEl = q('risk-pct');
+    if (!riskPctEl) return;
+    const riskPct = parseFloat(riskPctEl.value);
     if (!riskPct || riskPct <= 0) {
       markError('risk-pct', 'Enter a valid risk %');
       return;
@@ -513,13 +526,18 @@
     clearMark('risk-pct');
 
     // Resolve prices from detection or manual inputs
-    const manualVisible = q('manual-lines-section').style.display !== 'none';
+    const manualSection = q('manual-lines-section');
+    const manualVisible = manualSection ? manualSection.style.display !== 'none' : false;
     let sl, entry, tp;
 
     if (manualVisible) {
-      sl    = parseFloat(q('manual-sl').value);
-      entry = parseFloat(q('manual-entry').value);
-      tp    = parseFloat(q('manual-tp').value);
+      const slEl    = q('manual-sl');
+      const entryEl = q('manual-entry');
+      const tpEl    = q('manual-tp');
+      if (!slEl || !entryEl || !tpEl) return;
+      sl    = parseFloat(slEl.value);
+      entry = parseFloat(entryEl.value);
+      tp    = parseFloat(tpEl.value);
     } else {
       sl    = detectedPrices.SL;
       entry = detectedPrices.Entry;
@@ -584,10 +602,8 @@
       const currency  = input.dataset.currency;
       const direction = input.dataset.direction;
       if (direction === 'usdToQuote') {
-        // User entered: 1 USD = N quote_currency  →  rates[quote] = N  ✓
         rates[currency] = val;
       } else if (direction === 'acctToUSD') {
-        // User entered: 1 account_currency = N USD  →  rates[acct] = 1/N
         rates[currency] = 1 / val;
       }
     });
@@ -597,6 +613,7 @@
   function renderManualRateInputs(missing) {
     const section = q('manual-rates-section');
     const inputs  = q('manual-rates-inputs');
+    if (!section || !inputs) return;
     inputs.innerHTML = '';
 
     missing.forEach(({ currency, label, direction }) => {
@@ -607,11 +624,11 @@
       lbl.textContent = label;
 
       const inp = document.createElement('input');
-      inp.type             = 'number';
-      inp.step             = '0.00001';
+      inp.type              = 'number';
+      inp.step              = '0.00001';
       inp.dataset.currency  = currency;
       inp.dataset.direction = direction;
-      inp.placeholder      = direction === 'usdToQuote' ? 'e.g. 150' : 'e.g. 1.08';
+      inp.placeholder       = direction === 'usdToQuote' ? 'e.g. 150' : 'e.g. 1.08';
 
       wrapper.append(lbl, inp);
       inputs.appendChild(wrapper);
@@ -621,17 +638,24 @@
   }
 
   function hideManualRates() {
-    q('manual-rates-section').style.display = 'none';
-    q('manual-rates-inputs').innerHTML = '';
+    const section = q('manual-rates-section');
+    const inputs  = q('manual-rates-inputs');
+    if (section) section.style.display = 'none';
+    if (inputs)  inputs.innerHTML = '';
   }
 
   // ─────────────────────────────────────────────
   // Settings handler
   // ─────────────────────────────────────────────
   async function onSaveSettings() {
-    const accountSize = parseFloat(q('account-size').value);
-    const defaultRisk = parseFloat(q('default-risk').value);
-    const accountCurrency = q('account-currency').value;
+    const accountSizeEl = q('account-size');
+    const defaultRiskEl = q('default-risk');
+    const accountCurrEl = q('account-currency');
+    if (!accountSizeEl || !defaultRiskEl || !accountCurrEl) return;
+
+    const accountSize     = parseFloat(accountSizeEl.value);
+    const defaultRisk     = parseFloat(defaultRiskEl.value);
+    const accountCurrency = accountCurrEl.value;
 
     let valid = true;
     if (!accountSize || accountSize <= 0) { markError('account-size', ''); valid = false; }
@@ -643,9 +667,11 @@
     await Settings.save({ accountSize, accountCurrency, defaultRisk });
 
     // Mirror new default into the calculator tab
-    q('risk-pct').value = defaultRisk;
+    const riskPctEl = q('risk-pct');
+    if (riskPctEl) riskPctEl.value = defaultRisk;
 
     const fb = q('settings-feedback');
+    if (!fb) return;
     fb.style.display = '';
     setTimeout(() => { fb.style.display = 'none'; }, 2500);
   }
@@ -656,35 +682,49 @@
   function q(id) { return shadow.getElementById(id); }
 
   function renderPriceDisplay() {
-    const fmt = v => v !== null ? v : '—';
-    q('price-sl').textContent    = fmt(detectedPrices.SL);
-    q('price-entry').textContent = fmt(detectedPrices.Entry);
-    q('price-tp').textContent    = fmt(detectedPrices.TP);
+    const fmt      = v => v !== null ? v : '—';
+    const slEl     = q('price-sl');
+    const entryEl  = q('price-entry');
+    const tpEl     = q('price-tp');
+    if (!slEl || !entryEl || !tpEl) return;
 
-    // Pre-fill manual inputs with detected values
-    if (detectedPrices.SL    !== null) q('manual-sl').value    = detectedPrices.SL;
-    if (detectedPrices.Entry !== null) q('manual-entry').value = detectedPrices.Entry;
-    if (detectedPrices.TP    !== null) q('manual-tp').value    = detectedPrices.TP;
+    slEl.textContent    = fmt(detectedPrices.SL);
+    entryEl.textContent = fmt(detectedPrices.Entry);
+    tpEl.textContent    = fmt(detectedPrices.TP);
+
+    // Pre-fill manual inputs with detected values — guard each independently
+    const manSlEl    = q('manual-sl');
+    const manEntryEl = q('manual-entry');
+    const manTpEl    = q('manual-tp');
+    if (detectedPrices.SL    !== null && manSlEl)    manSlEl.value    = detectedPrices.SL;
+    if (detectedPrices.Entry !== null && manEntryEl) manEntryEl.value = detectedPrices.Entry;
+    if (detectedPrices.TP    !== null && manTpEl)    manTpEl.value    = detectedPrices.TP;
   }
 
   function showManualLines(show) {
-    q('manual-lines-section').style.display = show ? '' : 'none';
+    const el = q('manual-lines-section');
+    if (!el) return;
+    el.style.display = show ? '' : 'none';
   }
 
   function showError(msg) {
     const el = q('fx-error');
+    if (!el) return;
     el.textContent   = msg;
     el.style.display = '';
   }
 
   function clearError() {
     const el = q('fx-error');
+    if (!el) return;
     el.textContent   = '';
     el.style.display = 'none';
   }
 
   function hideResults() {
-    q('results').style.display = 'none';
+    const el = q('results');
+    if (!el) return;
+    el.style.display = 'none';
   }
 
   function markError(id, msg) {
@@ -700,15 +740,21 @@
   const CURRENCY_SYMBOLS = { USD: '$', EUR: '€', GBP: '£' };
 
   function renderResults(result, accountCurrency) {
-    const sym = CURRENCY_SYMBOLS[accountCurrency] || (accountCurrency + ' ');
+    const sym    = CURRENCY_SYMBOLS[accountCurrency] || (accountCurrency + ' ');
+    const lotEl  = q('result-lot');
+    const riskEl = q('result-risk');
+    const rrEl   = q('result-rr');
+    const slEl   = q('result-sl-pips');
+    const tpEl   = q('result-tp-pips');
+    const resEl  = q('results');
+    if (!lotEl || !riskEl || !rrEl || !slEl || !tpEl || !resEl) return;
 
-    q('result-lot').textContent      = result.lotSize.toFixed(2);
-    q('result-risk').textContent     = `${sym}${result.moneyAtRisk.toFixed(2)}`;
-    q('result-rr').textContent       = `1 : ${result.rrRatio.toFixed(2)}`;
-    q('result-sl-pips').textContent  = `${result.slPips.toFixed(1)} pips`;
-    q('result-tp-pips').textContent  = `${result.tpPips.toFixed(1)} pips`;
-
-    q('results').style.display = '';
+    lotEl.textContent  = result.lotSize.toFixed(2);
+    riskEl.textContent = `${sym}${result.moneyAtRisk.toFixed(2)}`;
+    rrEl.textContent   = `1 : ${result.rrRatio.toFixed(2)}`;
+    slEl.textContent   = `${result.slPips.toFixed(1)} pips`;
+    tpEl.textContent   = `${result.tpPips.toFixed(1)} pips`;
+    resEl.style.display = '';
   }
 
   // ─────────────────────────────────────────────
